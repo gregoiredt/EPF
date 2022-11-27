@@ -7,6 +7,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.base import clone
 from numpy import mean, std
 
+
 import matplotlib.pyplot as plt
 
 
@@ -124,6 +125,7 @@ def _yearly_cv_separation(X, y, dates):
                 df.loc[df.Date.dt.year == year, 'SpotPrice']
                 )
                for year in [2018, 2019, 2020]]
+
     return cv_list
 
 
