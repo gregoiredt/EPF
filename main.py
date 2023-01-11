@@ -137,18 +137,25 @@ def cqr_prediction_pipeline(filename='cqr_pred.csv', num_cpus=1, **kwargs):
     quantiles = [[q * 0.01, 1 - (q * 0.01)] for q in [0.5, 1, 2.5, 5, 10, 15, 20, 25, 30, 35, 40, 45]]
     list_quantiles_forest = [[round(q[0] * 100, 1), round(q[1] * 100, 1)] for q in quantiles]  \
         if kwargs['quantiles'] == 'all' else [0.5]
-
+    
+    quantile_models = ["QRF"]
     params_qforest = dict()
-    params_qforest["CV"] = kwargs['cqr_cv']
-    params_qforest["coverage_factor"] = 0.85
-    params_qforest["test_ratio"] = 0.05
-    params_qforest["random_state"] = 1
-    params_qforest["range_vals"] = 30
-    params_qforest["num_vals"] = 10
-    params_qforest["max_depth"] = 10
-    params_qforest["n_estimators"] = 400
-    params_qforest["max_features"] = 'sqrt'
-    params_qforest["min_samples_leaf"] = 1
+    if kwargs['models'] is "QRF":
+        params_qforest["CV"] = kwargs['cqr_cv']
+        params_qforest["coverage_factor"] = 0.85
+        params_qforest["test_ratio"] = 0.05
+        params_qforest["random_state"] = 1
+        params_qforest["range_vals"] = 30
+        params_qforest["num_vals"] = 10
+        params_qforest["max_depth"] = 10
+        params_qforest["n_estimators"] = 400
+        params_qforest["max_features"] = 'sqrt'
+        params_qforest["min_samples_leaf"] = 1
+    else:
+        # We update quantiles in conformal prediction pipeline
+        quantile_models = get_quantile_models(features, quantiles = [1], models=kwargs['models'])
+
+    kwargs['models'] = quantile_models
 
     kwargs['method_params'] = {
         'CQR': [None],
@@ -185,8 +192,8 @@ def get_parser():
                         help='Hours to predict, either one hour (like 18) or all')
     parser.add_argument('--method', type=str, required=False, default='CQR',
                         help='Conformal Prediction method (either "CQR", "ACI")')
-    parser.add_argument('--models', type=str, required=False, default='all',
-                        help='Type of quantile model to train, either "all", "lasso", "gb", "qrf"')
+    parser.add_argument('--models', type=str, required=False, default='None',
+                        help='Type of quantile model to train, either "all", "lasso", "gb", "qrf" or "all_but_qrf"')
     parser.add_argument('--id_start', type=int, required=False, default=0,
                         help='Time id from which we start predicting')
     parser.add_argument('--id_stop', type=int, required=False, default=730,
@@ -231,7 +238,7 @@ def run_main():
     else:
         list_hours = [i for i in range(24)]
 
-    models = args.models
+    models = None if args.models == "None" else args.models
 
     if gridsearch:
         logger.debug('Starting GridSearch Pipeline...')
@@ -255,6 +262,7 @@ def run_main():
 
         logger.debug('Started conformal quantile regression training...')
         cqr_prediction_pipeline(filename=args.filename,
+                                models = models, 
                                 num_cpus=args.num_cpus,
                                 time_mode=time_mode,
                                 list_hours=list_hours,

@@ -797,13 +797,13 @@ class QuantileForestRegressorAdapter(RegressorAdapter):
         self.cv_quantiles = []
 
         if self.preprocessing:
-            self.y_scaler = AsinhMedianScaler()
+            #self.y_scaler = AsinhMedianScaler()
             self.x_scaler = MedianScaler()
 
-            self.y_scaler.fit(y)
+            #self.y_scaler.fit(y)
             self.x_scaler.fit(x)
 
-            x, y = self.x_scaler.transform(x.copy()), self.y_scaler.transform(y.copy())
+            x = self.x_scaler.transform(x.copy())
 
         for quants in self.quantiles:
             q_low, q_high = quants[0], quants[1]
@@ -1030,6 +1030,7 @@ class CustomSklearnRegressorAdapter(RegressorAdapter):
     def __init__(self,
                  model,
                  fit_params=None,
+                 preprocessing=True,
                  quantiles=None,
                  params=None):
         """ Initialization
@@ -1039,28 +1040,40 @@ class CustomSklearnRegressorAdapter(RegressorAdapter):
         model : Scikit-learn model
         fit_params : None, used for compatibility with nc class
         quantiles : numpy array, low and high quantile levels in range (0,100)
+        preprocessing : boolean, whether to use preprocessing or not
         """
         super(CustomSklearnRegressorAdapter, self).__init__(model, fit_params)
         # Instantiate model
         self.quantiles = np.sort(quantiles)
         self.model = model
+        self.preprocessing = preprocessing
+        self.is_gradient_boosting = 'GradienBoosting' in model.name
         self.is_classical_regressor = self.quantiles is None
-        self.location_file = params['location_file']
         self.params = params
         self.dic = {}
 
     def fit(self, X, y, *args):
         """ Load the model from the provided file
         """
+        if self.preprocessing:
+            self.x_scaler = MedianScaler()
+            self.x_scaler.fit(X)
+            X = self.x_scaler.transform(X.copy())
+
         if not self.is_classical_regressor:
             self.dic_models = {}
+
             for quants in self.quantiles:
                 q_low, q_high = quants[0], quants[1]
-
-                model_quantile_low, model_quantile_high = clone(self.model), clone(self.model)
-
-                model_quantile_low.set_params(quantile=q_low / 100)
-                model_quantile_high.set_params(quantile=q_high / 100)
+                model_quantile_low, model_quantile_high = clone(self.model.pipeline[0]), clone(self.model.pipeline[0])
+                
+                if not(self.is_gradient_boosting):
+                    model_quantile_low.named_steps['rgr'].set_params(quantile=q_low / 100)
+                    model_quantile_high.named_steps['rgr'].set_params(quantile=q_high / 100)
+                
+                elif self.is_gradient_boosting:
+                    model_quantile_low.named_steps['rgr'].set_params(alpha=q_low / 100)
+                    model_quantile_high.named_steps['rgr'].set_params(alpha=q_high / 100)
 
                 model_quantile_low.fit(X, y)
                 model_quantile_high.fit(X, y)
@@ -1085,6 +1098,9 @@ class CustomSklearnRegressorAdapter(RegressorAdapter):
         ret_val : numpy array of estimated conditional quantiles (n, 2 * n_intervals)
 
         """
+        if self.preprocessing:
+            X = self.x_scaler.transform(X.copy())
+            
         if not self.is_classical_regressor:
             ret_val = np.zeros((X.shape[0], 2 * len(self.quantiles)))
             for i, quants in enumerate(self.quantiles):
@@ -1118,6 +1134,7 @@ class CustomExternalRegressorAdapter(RegressorAdapter):
                  model,
                  fit_params=None,
                  quantiles=None,
+                 preprocessing=True, 
                  params=None):
         """ Initialization
 

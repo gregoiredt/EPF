@@ -64,7 +64,7 @@ class SklearnModelPipeline:
             return self.trained_pipeline[hour]
         return self.pipeline[hour]
 
-    def train(self, X, y, hour):
+    def train(self, X, y, hour=0):
         '''
         Trains the models for a given hour
 
@@ -88,7 +88,7 @@ class SklearnModelPipeline:
 
         return self
 
-    def predict(self, X, hour, quantile=None):
+    def predict(self, X, hour=0, quantile=None):
         model = self.trained_pipeline[hour]
         if quantile is None:
             return model.predict(X)
@@ -455,7 +455,6 @@ def get_mean_models(features, models='all'):
 
     return all_models
 
-
 def get_quantile_models(features, quantiles, models='all'):
     quantile_models = []
 
@@ -468,23 +467,29 @@ def get_quantile_models(features, quantiles, models='all'):
                              ]), features, max_train_size=max_train_size))
 
     for q in quantiles:
+        if 'simple_test' in models:
+            quantile_models.append(SklearnModelPipeline(f'Lasso1QuantilePER{12*30}_{q}', Pipeline([
+                    ('rgr', QuantileRegressor(alpha=0.005, quantile=q / 100, solver='highs'))
+                ]), features, max_train_size=12*30))
+
         for max_train_size in [3 * 30, 6 * 30, 9 * 30, 12 * 30, 24 * 30, 36 * 30, None]:
 
-            if models == 'all' or models == 'lasso2':
+            if models == 'all' or models == 'all_but_qrf' or models == 'lasso2':
                 quantile_models.append(SklearnModelPipeline(f'Lasso2QuantilePER{max_train_size}_{q}', Pipeline([
                     ('rgr', QuantileRegressor(alpha=0.5, quantile=q / 100, solver='highs'))
                 ]), features, max_train_size=max_train_size))
 
-            if models == 'all' or models == 'lasso1':
+            if models == 'all' or models == 'all_but_qrf' or models == 'lasso1':
                 quantile_models.append(SklearnModelPipeline(f'Lasso1QuantilePER{max_train_size}_{q}', Pipeline([
                     ('rgr', QuantileRegressor(alpha=0.005, quantile=q / 100, solver='highs'))
                 ]), features, max_train_size=max_train_size))
 
-            if models == 'all' or models == 'linear':
+            if models == 'all' or models == 'all_but_qrf' or models == 'linear':
                 quantile_models.append(SklearnModelPipeline(f'LinQuantilePER{max_train_size}_{q}', Pipeline([
                     ('rgr', QuantileRegressor(alpha=0., quantile=q / 100, solver='highs'))
                 ]), features, max_train_size=max_train_size))
-            if models == 'all' or models == 'gb':
+
+            if models == 'all' or models == 'all_but_qrf' or  models == 'gb':
                 quantile_models.append(SklearnModelPipeline(f'GradientBoostingPER{max_train_size}_{q}', Pipeline([
                     ('rgr', GradientBoostingRegressor(loss='quantile', alpha=q / 100,
                                                       n_estimators=200,
@@ -495,77 +500,3 @@ def get_quantile_models(features, quantiles, models='all'):
                 ]), features, max_train_size=max_train_size))
 
     return quantile_models
-
-### Brouillon
-
-# class QuantileModelGatherer:
-#
-#     def __init__(self, model, quantiles, fit_params=None):
-#         super(QuantileModelGatherer, self).__init__()
-#         self.is_unique, self.model, self.models = _define_proper_quantile_models(model)
-#         self.quantiles = quantiles
-#         self.list_models = {}
-#
-#     def fit(self, X, y):
-#         if not (self.is_unique):
-#             for i, quantile in enumerate(self.quantiles):
-#                 self.models[i].fit(X, y)
-#         else:
-#             self.model.fit(X, y)
-#         return self
-#
-#     def predict(self, X, quantile=0.5):
-#         if self.is_unique:
-#             return self.model.predict(X, quantile=100 * quantile)
-#         else:
-#             try:
-#                 id_ = np.argwhere(self.quantiles == quantile)[0][0]
-#             except IndexError as e:
-#                 raise IndexError(
-#                     f'The model was not fitted for this quantile ! Please choose another one among {self.quantiles}')
-#             return self.models[id_].predict(X)
-#
-#     def save(self, dirpath):
-#         if not self.is_unique:
-#             for i, quantile in enumerate(self.quantiles):
-#                 filename = os.path.join(dirpath, f'q_{int(100*quantile)}.pkl')
-#                 with open(filename, 'wb') as file:
-#                     pickle.dump(self.models[i], file)
-#         else:
-#             filename = os.path.join(dirpath, f'q_all.pkl')
-#             with open(filename, 'wb') as file:
-#                 pickle.dump(self.model, file)
-#
-#     def load(self, dirpath):
-#         if not self.is_unique:
-#             for i, quantile in enumerate(self.quantiles):
-#                 filename = os.path.join(dirpath, f'q_{int(100*quantile)}.pkl')
-#                 with open(filename, 'rb') as file:
-#                     self.models[i] = pickle.load(file)
-#         else:
-#             filename = os.path.join(dirpath, f'q_all.pkl')
-#             with open(filename, 'rb') as file:
-#                 self.model = pickle.load(file)
-
-
-# def _define_proper_quantile_models(models):
-#     is_unique = False
-#     if len(models) == 1 and isinstance(models, RandomForestQuantileRegressor):
-#         is_unique = True
-#         return is_unique, models[0], []
-#
-#     else:
-#         return is_unique, None, models
-
-# class RowSelector(BaseEstimator, TransformerMixin):
-#     '''
-#     Selects last n_rows_to_select rows of a given Training dataset.
-#     '''
-#     def __init__(self, n_rows_to_select):
-#         self.n_rows_to_select = n_rows_to_select
-#     def fit(self, X, y=None):
-#         return self
-#     def transform(self, X):
-#         return X[-self.n_rows_to_select:]
-#     def get_params(self, deep=True):
-#         return {'n_rows_to_select' : self.n_rows_to_select}
