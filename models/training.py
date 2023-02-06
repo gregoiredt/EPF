@@ -217,7 +217,7 @@ def _cqr_training_jacknife(df, h, features, list_quantiles_forest, params_qfores
     adaptative_significance_levels = np.repeat(np.array(significance_levels).reshape(-1, 1), len(gammas), axis=1) \
         if 'ACI' in method else None
     nc_method = 'ACI' if 'ACI' in method else 'CQR'
-    method = 'CQRoj' if 'ACI' in method else method
+    method = 'CQRoj' if 'CQRoj' in method else method
 
     idx_train_cal = np.concatenate([idx_train, idx_cal])
 
