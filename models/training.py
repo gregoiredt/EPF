@@ -25,14 +25,20 @@ def cqr_training(df, features, list_quantiles_forest, params_qforest, dic_var_qr
     method = kwargs['method']
     dic_method_params = kwargs['method_params']
     no_conformal = kwargs['no_conformal']
+    location_files = kwargs['location_files'] if 'location_files' in kwargs else None
+    custom = kwargs['custom'] if 'custom' in kwargs else None
     arguments = []
     sklmodels = kwargs['models']
+    if len(sklmodels) == 0:
+        sklmodels = ["QRF"]
     list_divides = divide_in_equal_length(id_start, id_stop, n_div=kwargs['n_div'])
     parallel = kwargs['parallel'] if 'parallel' in kwargs else True
 
     logger.info(f'Parameters for submitted job...')
 
     logger.info(f'Params forest = {params_qforest}')
+    logger.info(f'Location files = {location_files}')
+    logger.info(f'custom = {custom}')
     logger.info(f'List quantile : {list_quantiles_forest}')
     logger.info(f'List coverages : {significance_levels}')
     logger.info(f'N_divides = {len(list_divides)}')
@@ -52,7 +58,7 @@ def cqr_training(df, features, list_quantiles_forest, params_qforest, dic_var_qr
                     for (start, stop) in list_divides:
                         arguments.append((df, h, features, list_quantiles_forest, params_qforest, dic_var_qrf,
                                         significance_levels, mode, cal_size, method, method_param, start, stop,
-                                        no_conformal, preprocessing, model))
+                                        no_conformal, preprocessing, model, custom))
 
     logger.info(f'Launching {len(arguments)} jobs on {num_cpus}...')
 
@@ -90,7 +96,7 @@ def _update_params_qforest(params_qforest, dic_var, hour):
 
 
 def _cqr_training_test_conformal(df, h, features, list_quantiles_forest, params_qforest, dic_var_qrf,
-                                 significance_levels, mode, cal_size, method, method_param, id_start, id_stop, no_conformal, preprocessing, model, parallel=True):
+                                 significance_levels, mode, cal_size, method, method_param, id_start, id_stop, no_conformal, preprocessing, model, custom, parallel=True):
     df_pred = DataFrame()
     dfh = df[df.Hour == h].reset_index(drop=True)
     list_split = custom_time_series_split(dfh, mode=mode, cal=True, cal_size=cal_size)[id_start: id_stop]
@@ -205,12 +211,14 @@ def _cqr_training_test_conformal(df, h, features, list_quantiles_forest, params_
 
 
 def _cqr_training_jacknife(df, h, features, list_quantiles_forest, params_qforest, dic_var_qrf, significance_levels,
-                           mode, cal_size, method, method_param, id_start, id_stop, no_conformal, preprocessing, model, parallel=True):
+                           mode, cal_size, method, method_param, id_start, id_stop, no_conformal, preprocessing, model, custom, parallel=True):
     df_pred = DataFrame()
     dfh = df[df.Hour == h].reset_index(drop=True)
     (idx_train, idx_cal, idx_val) = custom_time_series_split(dfh, mode=mode, cal=True, cal_size=cal_size)[0]
+    
     model_as_string = model if model =='QRF' else model.name
-    #params_qforest = _update_params_qforest(params_qforest, dic_var_qrf, h)
+    logger.debug(f'=========== Model taken {model_as_string} ! ============')
+    # params_qforest = _update_params_qforest(params_qforest, dic_var_qrf, h)
 
     # ACI possibility
     gammas = method_param if 'ACI' in method else None
@@ -228,15 +236,22 @@ def _cqr_training_jacknife(df, h, features, list_quantiles_forest, params_qfores
     id_start_val, id_stop_val = np.max(idx_cal) + 1 + id_start, np.max(idx_cal) + 1 + id_stop
     X_val, y_val = dfh.loc[id_start_val:id_stop_val, features].to_numpy(), dfh.loc[id_start_val:id_stop_val, 'SpotPrice'].to_numpy()
 
-    if model == "QRF":
+    if model == "QRF" and custom =="0":
         quantile_estimator = helper.QuantileForestRegressorAdapter(model=None,
                                                                 fit_params=None,
                                                                 quantiles=list_quantiles_forest,
                                                                 params=params_qforest,
                                                                 preprocessing=preprocessing)
+    elif model == "QRF" and custom !="0":
+            quantile_estimator = helper.CustomExternalRegressorAdapter(
+            fit_params=None,
+            quantiles=list_quantiles_forest,
+            preprocessing=preprocessing
+         )    
+    
     else:
         quantile_estimator = helper.CustomSklearnRegressorAdapter(
-            model=model,
+            model = model,
             fit_params=None,
             quantiles=list_quantiles_forest,
             preprocessing=preprocessing
@@ -252,8 +267,13 @@ def _cqr_training_jacknife(df, h, features, list_quantiles_forest, params_qfores
 
     time_start = time()
     if method == 'CQRoj':
-        predictions = helper.run_ojacknife(nc, X_train, y_train, X_val, idx_train, idx_cal, significance_levels,
-                                           y_test=y_val.copy(), print_=not(parallel), method=nc_method)
+        if custom == "0":
+            predictions = helper.run_ojacknife(nc, X_train, y_train, X_val, idx_train, idx_cal, significance_levels,
+                                           y_test=y_val.copy(), print_=True, method=nc_method)
+        else:
+            predictions = helper.run_ojacknife_custom(nc, X_train, y_train, X_val, idx_train, idx_cal, significance_levels,
+                                         y_test=y_val.copy(), print_=not(parallel), method=nc_method, df=dfh, hour=h, cal_size=cal_size)
+
     if method == 'CQRoj+':
         predictions = helper.run_ojacknifeplus(nc, X_train, y_train, X_val, idx_train, idx_cal, significance_levels,
                                                y_test=y_val.copy(), print_=not(parallel), method=nc_method)
@@ -299,11 +319,12 @@ def _cqr_training_jacknife(df, h, features, list_quantiles_forest, params_qfores
 
 
 def _cqr_training(df, h, features, list_quantiles_forest, params_qforest, dic_var_qrf, significance_levels, mode,
-                  cal_size, method, method_param, id_start, id_stop, no_conformal, preprocessing, model, parallel=True):
+                  cal_size, method, method_param, id_start, id_stop, no_conformal, preprocessing, model, custom, parallel=True):
     df_pred = DataFrame()
     dfh = df[df.Hour == h].reset_index(drop=True)
     list_split = custom_time_series_split(dfh, mode=mode, cal=True, cal_size=cal_size)[id_start: id_stop]
     model_as_string = model if model =='QRF' else model.name
+
     #params_qforest = _update_params_qforest(params_qforest, dic_var_qrf, h)
 
     gammas = method_param if method == 'ACI' else None

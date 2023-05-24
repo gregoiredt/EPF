@@ -9,7 +9,7 @@ Inductive conformal predictors.
 from __future__ import division
 from collections import defaultdict
 from functools import partial
-
+from loguru import logger
 import numpy as np
 from sklearn.base import BaseEstimator
 
@@ -46,7 +46,7 @@ class BaseIcp(BaseEstimator):
             self.condition = lambda x: 0
             self.conditional = False
 
-    def fit(self, x, y):
+    def fit(self, x, y, *args, **kwargs):
         """Fit underlying nonconformity scorer.
 
 		Parameters
@@ -61,8 +61,9 @@ class BaseIcp(BaseEstimator):
 		-------
 		None
 		"""
-        # TODO: incremental?
-        self.nc_function.fit(x, y)
+        #logger.info(f'{kwargs} ; {args}')
+	    
+        self.nc_function.fit(x, y, *args, **kwargs)
 
     def calibrate(self, x, y, increment=False):
         """Calibrate conformal predictor based on underlying nonconformity

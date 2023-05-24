@@ -137,6 +137,13 @@ def cqr_prediction_pipeline(filename='cqr_pred.csv', num_cpus=1, **kwargs):
     quantiles = [[q * 0.01, 1 - (q * 0.01)] for q in [0.5, 1, 2.5, 5, 10, 15, 20, 25, 30, 35, 40, 45]]
     list_quantiles_forest = [[round(q[0] * 100, 1), round(q[1] * 100, 1)] for q in quantiles]  \
         if kwargs['quantiles'] == 'all' else [0.5]
+
+    if kwargs['custom'] != '0':
+        #location_files = [x[0] for x in os.walk(kwargs['location_file_path'])]
+        #location_files = sorted(location_files)
+        location_files = None
+    else:
+        location_files = None
     
     quantile_models = ["QRF"]
     params_qforest = dict()
@@ -154,6 +161,8 @@ def cqr_prediction_pipeline(filename='cqr_pred.csv', num_cpus=1, **kwargs):
     else:
         # We update quantiles in conformal prediction pipeline
         quantile_models = get_quantile_models(features, quantiles = [1], models=kwargs['models'])
+        if not(kwargs['max_train_size_id'] is None):
+            quantile_models = [quantile_models[kwargs['max_train_size_id']]]
 
     kwargs['models'] = quantile_models
 
@@ -188,6 +197,8 @@ def get_parser():
                         help='Filename to save, must end by ".csv"')
     parser.add_argument('--time_mode', type=str, required=False, default="day",
                         help='Window size of prediction, either day or week')
+    parser.add_argument('--custom', type=str, required=False, default='0',
+                        help='The path to already trained models predictions')
     parser.add_argument('--hours', type=str, required=False, default="all",
                         help='Hours to predict, either one hour (like 18) or all')
     parser.add_argument('--method', type=str, required=False, default='CQR',
@@ -208,6 +219,8 @@ def get_parser():
                         help='Maximum number of years on which to train')
     parser.add_argument('--feature_importance', type=int, required=False, default=0,
                         help='Whether to get feature_importances or not')
+    parser.add_argument('--max_train_size_id', type=int, required=False, default=0,
+                        help='id of max train size model')
     parser.add_argument('--preprocessing', type=int, required=False, default=1,
                         help='Whether to preprocess data or not')
     parser.add_argument('--gridsearch', type=int, required=False, default=0, help='Special Gridsearch pipeline')
@@ -229,6 +242,7 @@ def run_main():
     preprocessing = bool(args.preprocessing)
     cal_sizes = [0.75, 0.5, 0.25] if args.cal_sizes == 'all' else [float(args.cal_sizes)]
     cqr_cv = bool(args.cqr_cv)
+    max_train_size_id = args.max_train_size_id - 1 if args.max_train_size_id > 0 else None
     parallel = bool(args.parallel)
 
     if len(args.hours) <= 2:
@@ -272,10 +286,12 @@ def run_main():
                                 n_div=args.n_div,
                                 no_conformal=no_conformal,
                                 quantiles=args.quantiles,
-                                max_train_size=args.max_train_size,
                                 preprocessing=preprocessing,
                                 cal_sizes=cal_sizes,
                                 cqr_cv=cqr_cv,
+                                max_train_size = args.max_train_size,
+                                custom = args.custom,
+                                max_train_size_id=max_train_size_id,
                                 parallel=parallel
                                 )
 

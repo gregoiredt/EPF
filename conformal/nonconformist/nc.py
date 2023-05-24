@@ -10,6 +10,7 @@ Nonconformity functions.
 from __future__ import division
 
 import abc
+from loguru import logger
 import numpy as np
 import sklearn.base
 from ..nonconformist.base import ClassifierAdapter, RegressorAdapter
@@ -417,7 +418,7 @@ class BaseModelNc(BaseScorer):
         self.last_prediction = None
         self.clean = False
 
-    def fit(self, x, y):
+    def fit(self, x, y, *args, **kwargs):
         """Fits the underlying model of the nonconformity scorer.
 
 		Parameters
@@ -432,7 +433,8 @@ class BaseModelNc(BaseScorer):
 		-------
 		None
 		"""
-        self.model.fit(x, y)
+        logger.info(f'{self.model}')
+        self.model.fit(x, y, *args, **kwargs)
         if self.normalizer is not None:
             self.normalizer.fit(x, y)
         self.clean = False
