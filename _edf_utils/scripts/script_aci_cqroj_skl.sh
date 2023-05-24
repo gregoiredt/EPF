@@ -12,7 +12,7 @@
 #SBATCH --mem-per-cpu=3500
 #SBATCH --partition=cn
 #SBATCH --wckey=P11YQ:StOpt
-source  py37/bin/activate
+source  py37/bin/activate 
 cd Travail/code/code
 
 
@@ -32,5 +32,5 @@ do
 done
 
 
-
+python main.py --type_training conformal --filename custom.csv --time_mode day --hours final_choice --method CQRoj --n_div 1 --id_start 0 --id_stop 740 --preprocessing 1 --parallel 0 --custom 1 --cal_size 0.5 --models QRF
 

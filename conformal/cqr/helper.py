@@ -12,15 +12,13 @@ from .models import AsinhScaler, AsinhMedianScaler, MedianScaler
 from loguru import logger
 import torch
 
+DIR_GAM = "/Users/user/Documents/Archive Grégoire/greg stage/gam_results"
 import pdb
 
 if torch.cuda.is_available():
     device = "cuda:0"
 else:
     device = "cpu"
-
-
-
 
 def compute_coverage_len(y_test, y_lower, y_upper):
     """ Compute average coverage and length of prediction intervals
@@ -89,7 +87,7 @@ def run_icp(nc, X_train, y_train, X_test, idx_train, idx_cal, significance, cond
 
 # TODO : Implement for mean predictions
 def run_ojacknife(nc, X_train, y_train, X_test, idx_train, idx_cal, significance, condition=None, y_test=None,
-                  method='CQR', print_=False):
+                  method='CQR', print_=False, **kwargs):
     """ Run Online Jacknife prediction
 
     Parameters
@@ -111,6 +109,8 @@ def run_ojacknife(nc, X_train, y_train, X_test, idx_train, idx_cal, significance
     y_upper : numpy array, estimated upper bound for the labels (n2)
 
     """
+    location_files = kwargs["location_files"] if "location_files" in kwargs else None
+
     n_train, n_cal, n_test = idx_train.shape[0], idx_cal.shape[0], X_test.shape[0]
     saved_cal_scores = np.zeros((n_cal, len(significance)))
     X = np.vstack([X_train, X_test])
@@ -123,6 +123,8 @@ def run_ojacknife(nc, X_train, y_train, X_test, idx_train, idx_cal, significance
     predictions = np.zeros((X_test.shape[0], 2, len(significance))) if method=='CQR' \
         else np.zeros((X_test.shape[0], 2, len(significance), len(nc.gammas)))
     for i, idx in enumerate(idx_cal_test):
+        if location_files is not None:
+            location_file = location_files[i]
         icp = IcpRegressor(nc, condition=condition)
         nidx_train = np.concatenate([idx_train[i:], idx_cal_test[max(0, i - n_train):i]])
 
@@ -130,11 +132,96 @@ def run_ojacknife(nc, X_train, y_train, X_test, idx_train, idx_cal, significance
 
         if print_:
             logger.info(f' -------  Starting {i}-th step (out of {len(idx_cal_test[:-1])})... -------- ')
-            logger.info(f'Nidx_train : {nidx_train} ')
-            logger.info(f'idx : {idx}')
+            logger.info(f'idx {idx} ; first_idx_test {first_idx_test}')
+            #logger.info(f'idx : {idx}')
 
         # Fit the ICP using the proper training set
         icp.fit(X_copy[nidx_train, :], y_copy[nidx_train])
+        icp.categories = np.array([0])
+
+        # Predict on test_set
+        if idx >= first_idx_test:
+            if print_:
+                logger.info('testing...')
+            icp.cal_scores = {0: np.sort(saved_cal_scores, 0)[::-1]}
+            predictions[i - n_cal] = icp.predict(X_copy[[idx]], significance=significance,
+                                                     y_test=y_copy[[idx]]).squeeze(0)
+            if print_:
+                logger.info(f'adaptative significance : {nc.significance_t}')
+                logger.info(f'index of test {i  - n_cal}')
+
+        # Calibrate the ICP using the calibration set
+        icp.calibrate(X_copy[[idx], :], y_copy[[idx]])
+        saved_cal_scores[i % n_cal] = icp.cal_scores[0]  # only one cal_score
+
+        logger.info(f'cal score : {icp.cal_scores[0]}')
+
+        if print_:
+            logger.info(f'Calibration scores : {icp.cal_scores[0]}')
+
+    return predictions
+
+def run_ojacknife_custom(nc, X_train, y_train, X_test, idx_train, idx_cal, significance, condition=None, y_test=None,
+                  method='CQR', print_=True, df=None, hour=1, cal_size=0.25, **kwargs):
+    """ Run Online Jacknife prediction
+
+    Parameters
+    ----------
+
+    nc : class of nonconformist object
+    X_train : numpy array, training features (n1Xp)
+    y_train : numpy array, training labels (n1)
+    X_test : numpy array, testing features (n2Xp)
+    idx_train : numpy array, indices of proper training set examples
+    idx_cal : numpy array, indices of calibration set examples
+    significance : float, significance level (e.g. 0.1)
+    condition : function, mapping feature vector to group id
+
+    Returns
+    -------
+
+    y_lower : numpy array, estimated lower bound for the labels (n2)
+    y_upper : numpy array, estimated upper bound for the labels (n2)
+
+    """
+    location_files = kwargs["location_files"] if "location_files" in kwargs else None
+    dates = df.Date.unique()
+    #logger.info(f'Help : {dates.index("2018-01-10")}')
+    n_train, n_cal, n_test = idx_train.shape[0], idx_cal.shape[0], X_test.shape[0]
+    saved_cal_scores = np.zeros((n_cal, len(significance)))
+    X = np.vstack([X_train, X_test])
+    y = np.concatenate([y_train, y_test])
+
+    idx_test = np.arange(len(X_test)) + np.max(idx_cal) + 1
+    first_idx_test = np.min(idx_test)
+    idx_cal_test = np.concatenate([idx_cal, idx_test])
+
+    predictions = np.zeros((X_test.shape[0], 2, len(significance))) if method=='CQR' \
+        else np.zeros((X_test.shape[0], 2, len(significance), len(nc.gammas)))
+    
+    logger.info('Reading big file...')
+    dfg = read_csv(os.path.join(DIR_GAM, f'pred_day_qgamPERNone_{hour}_{int(100 - 100*cal_size)}.csv')).drop(columns = ['Unnamed: 0', 'Hour', 'SpotPrice', 'model', 'training_time'])
+    dfg['key'] = dfg.Date.astype(str) + '-' + dfg['quantile'].astype(str) 
+    dfg = dfg.drop(columns = ['Date', 'quantile'])
+    logger.info('Read and treated !')
+
+    for i, idx in enumerate(idx_cal_test):
+
+        icp = IcpRegressor(nc, condition=condition)
+        nidx_train = np.concatenate([idx_train[i:], idx_cal_test[max(0, i - n_train):i]])
+
+        #X_copy, y_copy = X.copy(), y.copy()
+        X_copy, y_copy = df.loc[:, 'Date'].to_numpy().reshape(-1, 1), y.copy()
+
+        if print_:
+            logger.info(f' -------  Starting {i}-th step (out of {len(idx_cal_test[:-1])})... -------- ')
+            logger.info(f'Nidx_train : {nidx_train} ')
+            logger.info(f'idx : {idx}')
+            #logger.info(f'Date train: {dates[nidx_train]}')
+            #logger.info(f'Date pred: {dates[idx]}')
+
+        # Fit the ICP using the proper training set
+        icp.fit(X_copy[nidx_train, :], y_copy, hour=hour, cal_size=cal_size, idx=idx, df=dfg)
         icp.categories = np.array([0])
 
         # Predict on test_set
@@ -581,7 +668,7 @@ class MSENet_RegressorAdapter(RegressorAdapter):
                                                      test_ratio=self.test_ratio,
                                                      random_state=self.random_state)
 
-    def fit(self, x, y):
+    def fit(self, x, y, **kwargs):
         """ Fit the model to data
 
         Parameters
@@ -688,7 +775,7 @@ class AllQNet_RegressorAdapter(RegressorAdapter):
                                                              qhigh=self.quantiles[1],
                                                              use_rearrangement=use_rearrangement)
 
-    def fit(self, x, y):
+    def fit(self, x, y, **kwargs):
         """ Fit the model to data
 
         Parameters
@@ -784,7 +871,7 @@ class QuantileForestRegressorAdapter(RegressorAdapter):
                                                   n_estimators=params["n_estimators"],
                                                   max_features=params["max_features"])
 
-    def fit(self, x, y):
+    def fit(self, x, y, **kwargs):
         """ Fit the model to data
 
         Parameters
@@ -934,7 +1021,7 @@ class AdaptativeQuantileForestRegressorAdapter(RegressorAdapter):
                                                   n_estimators=params["n_estimators"],
                                                   max_features=params["max_features"])
 
-    def fit(self, x, y):
+    def fit(self, x, y, **kwargs):
         """ Fit the model to data
 
         Parameters
@@ -1047,18 +1134,24 @@ class CustomSklearnRegressorAdapter(RegressorAdapter):
         self.quantiles = np.sort(quantiles)
         self.model = model
         self.preprocessing = preprocessing
-        self.is_gradient_boosting = 'GradienBoosting' in model.name
+        self.is_gradient_boosting = 'GradientBoosting' in model.name
         self.is_classical_regressor = self.quantiles is None
         self.params = params
         self.dic = {}
 
-    def fit(self, X, y, *args):
+    def fit(self, X, y, **kwargs):
         """ Load the model from the provided file
         """
         if self.preprocessing:
             self.x_scaler = MedianScaler()
             self.x_scaler.fit(X)
             X = self.x_scaler.transform(X.copy())
+        
+        name = self.model.name
+        name = name.split("_")[0].split("PER")[1]
+        max_train_size = int(name) if name != "None" else None
+        if not(max_train_size is None):
+            max_train_size = max([max_train_size, len(y)])
 
         if not self.is_classical_regressor:
             self.dic_models = {}
@@ -1075,8 +1168,12 @@ class CustomSklearnRegressorAdapter(RegressorAdapter):
                     model_quantile_low.named_steps['rgr'].set_params(alpha=q_low / 100)
                     model_quantile_high.named_steps['rgr'].set_params(alpha=q_high / 100)
 
-                model_quantile_low.fit(X, y)
-                model_quantile_high.fit(X, y)
+                if not(max_train_size is None):
+                    model_quantile_low.fit(X[-max_train_size:], y[-max_train_size:])
+                    model_quantile_high.fit(X[-max_train_size:], y[-max_train_size:])
+                else: 
+                    model_quantile_low.fit(X, y)
+                    model_quantile_high.fit(X, y)
 
                 self.dic_models[q_low] = model_quantile_low
                 self.dic_models[q_high] = model_quantile_high
@@ -1131,7 +1228,6 @@ class CustomExternalRegressorAdapter(RegressorAdapter):
     """
 
     def __init__(self,
-                 model,
                  fit_params=None,
                  quantiles=None,
                  preprocessing=True, 
@@ -1148,29 +1244,39 @@ class CustomExternalRegressorAdapter(RegressorAdapter):
                 params["delimiter"] : Delimiter to read file from csv format
 
         """
-        super(CustomExternalRegressorAdapter, self).__init__(model, fit_params)
+        super(CustomExternalRegressorAdapter, self).__init__(fit_params)
         # Instantiate model
         self.quantiles = quantiles
-        self.location_file = params['location_file']
+        self.preprocessing=False
+        #self.location_file = params['location_file']
         self.params = params
         self.dic = {}
 
-    def fit(self, *args):
+    def fit(self, X, y, hour=1, cal_size=0.25, idx=0, df=None, **kwargs):
         """ Load the model from the provided file
         """
-        X = read_csv(os.path.join(self.location_file, 'x.csv'))
-        y = read_csv(os.path.join(self.location_file, 'y.csv'))
-        assert X.shape[0] == y.shape[0]
-        for i in range(X.shape[0]):
-            x = np.floor(X.iloc[i].to_numpy().copy())
-            if y.shape[1] == 1:
-                self.dic[hash(x.tobytes())] = y.iloc[i][0]
-                self.ydim = 1
-            else:
-                self.dic[hash(x.tobytes())] = y.to_numpy()[i]
 
-        self.ydim = y.shape[1]
+        #filepath_1 = os.path.join(DIR_GAM, str(hour))
+        #filepath_2 = os.path.join(filepath_1, str(int(100 - 100 *cal_size)))
+        if cal_size==0.5:
+            idx = idx-730
+        if cal_size==0.25:
+            idx = idx-1095
+        if cal_size==0.75:
+            idx = idx-365
+        #filepath_3 = os.path.join(filepath_2, str(idx))  
+        logger.info(f'{df.id_model.max()}') 
 
+        #df = read_csv(os.path.join(filepath_3, "predictions.csv"))
+        dfn = df[df.id_model == int((df.id_model.max() - idx))].set_index('key').drop(columns=['id_model']).copy()
+        
+        self.dic = dfn.to_dict('index')
+        
+        #for date in df.Date.unique():
+        #    for j, quantile in enumerate(df['quantile'].unique()):
+        #        key = str(date) + '-' + str(quantile)
+        #        self.dic[key] = df[(df.Date == date) & (df['quantile'] == quantile)].SpotPrice_pred.values[0]
+        
         return self
 
     def predict(self, X, *args):
@@ -1185,6 +1291,32 @@ class CustomExternalRegressorAdapter(RegressorAdapter):
         ret_val : numpy array of estimated conditional quantiles (n, 2 * n_intervals)
 
         """
+        logger.info('Predicting ...')
+            
+        ret_val = np.zeros((X.shape[0], 2 * len(self.quantiles)))
+        for i in range(X.shape[0]):
+            for j, quantile in enumerate(self.quantiles):
+        
+                x_value_low = str(X[i].tolist()[0]) + '-' + str(quantile[0])
+                x_value_high = str(X[i].tolist()[0]) + '-' + str(quantile[1])
+                try:
+                    lower = self.dic[x_value_low]['SpotPrice_pred']
+                except:
+                    raise ValueError('Given low array not in the prediction set')
+
+                try:
+                    upper = self.dic[x_value_high]['SpotPrice_pred']
+                except:
+                    raise ValueError('Given high array not in the prediction set')
+                
+                ret_val[:, j] = lower
+                ret_val[:, -(j + 1)] = upper
+
+        logger.info('Predicted !')
+        return ret_val
+
+
+
         if self.ydim == 1:
             ret_val = np.zeros(X.shape[0])
         else:
